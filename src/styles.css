@@ -535,6 +535,18 @@ button {
   margin-top: 12px;
 }
 
+.template-picker {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  padding: 12px;
+  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
 .selector-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -795,6 +807,10 @@ button {
   }
 
   .url-control {
+    grid-template-columns: 1fr;
+  }
+
+  .template-picker {
     grid-template-columns: 1fr;
   }
 }

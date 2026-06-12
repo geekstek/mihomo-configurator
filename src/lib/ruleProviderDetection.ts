@@ -13,6 +13,7 @@ export type RuleProviderDetectionResult = {
   message: string;
   detail?: string;
   statusCode?: number;
+  normalizedUrl?: string;
   format?: RuleProviderFormat;
   behavior?: RuleProviderBehavior;
   name?: string;
@@ -61,12 +62,14 @@ export async function detectRuleProviderUrl(url: string): Promise<RuleProviderDe
     };
   }
 
-  const fromUrl = inferFromUrl(parsed);
+  const normalized = normalizeDownloadUrl(parsed);
+  const fromUrl = inferFromUrl(normalized);
+  const normalizedUrl = normalized.href === parsed.href ? undefined : normalized.href;
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const response = await fetch(parsed.href, {
+    const response = await fetch(normalized.href, {
       cache: 'no-store',
       signal: controller.signal,
     });
@@ -91,8 +94,9 @@ export async function detectRuleProviderUrl(url: string): Promise<RuleProviderDe
       ...merged,
       status: 'ok',
       statusCode: response.status,
+      normalizedUrl,
       message: 'URL 可访问，已识别规则集',
-      detail: createDetail(merged),
+      detail: appendNormalizedDetail(createDetail(merged), normalizedUrl),
     };
   } catch (error) {
     const isAbort = error instanceof DOMException && error.name === 'AbortError';
@@ -100,10 +104,11 @@ export async function detectRuleProviderUrl(url: string): Promise<RuleProviderDe
     return {
       ...fromUrl,
       status: isAbort ? 'timeout' : 'cors-or-network',
+      normalizedUrl,
       message: isAbort ? '检测超时' : '浏览器无法读取这个 URL',
-      detail: isAbort
+      detail: appendNormalizedDetail(isAbort
         ? '服务器响应太慢，mihomo 运行时仍可能可以下载。'
-        : '常见原因是目标站点没有开放 CORS；mihomo 运行时不受浏览器 CORS 限制。',
+        : '常见原因是目标站点没有开放 CORS；mihomo 运行时不受浏览器 CORS 限制。', normalizedUrl),
       confidence: fromUrl.confidence,
     };
   } finally {
@@ -123,6 +128,41 @@ function parseUrl(value: string): URL | null {
   } catch {
     return null;
   }
+}
+
+function normalizeDownloadUrl(url: URL): URL {
+  const host = url.hostname.toLowerCase();
+
+  if (host !== 'github.com' && host !== 'www.github.com') {
+    return url;
+  }
+
+  const segments = url.pathname.split('/').filter(Boolean);
+  const [owner, repo, mode] = segments;
+
+  if (!owner || !repo || (mode !== 'raw' && mode !== 'blob')) {
+    return new URL(url.href.replace('://www.github.com/', '://github.com/'));
+  }
+
+  const rest = segments.slice(3);
+
+  if (rest[0] === 'refs' && rest[1] === 'heads' && rest[2]) {
+    const branch = rest[2];
+    const filePath = rest.slice(3).join('/');
+
+    if (filePath) {
+      return new URL(`https://raw.githubusercontent.com/${owner}/${repo}/refs/heads/${branch}/${filePath}`);
+    }
+  }
+
+  const branch = rest[0];
+  const filePath = rest.slice(1).join('/');
+
+  if (!branch || !filePath) {
+    return new URL(url.href.replace('://www.github.com/', '://github.com/'));
+  }
+
+  return new URL(`https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filePath}`);
 }
 
 function inferFromUrl(url: URL): Omit<RuleProviderDetectionResult, 'status' | 'message'> {
@@ -218,8 +258,13 @@ function inferBinaryFormat(bytes: Uint8Array): RuleProviderFormat | undefined {
     && bytes[1] === 0xb5
     && bytes[2] === 0x2f
     && bytes[3] === 0xfd;
+  const hasMihomoMrsHeader = bytes.length >= 16
+    && new TextDecoder('utf-8', { fatal: false })
+      .decode(bytes.slice(0, 16))
+      .toLowerCase()
+      .includes('mihomo');
 
-  if (isMrs || isZstd) {
+  if (isMrs || isZstd || hasMihomoMrsHeader) {
     return 'mrs';
   }
 
@@ -397,6 +442,15 @@ function createDetail(result: Pick<RuleProviderDetectionResult, 'format' | 'beha
   ].filter(Boolean);
 
   return parts.join(' · ');
+}
+
+function appendNormalizedDetail(
+  detail: string | undefined,
+  normalizedUrl: string | undefined,
+): string | undefined {
+  const normalizedText = normalizedUrl ? '已规范化为 raw.githubusercontent.com' : undefined;
+
+  return [detail, normalizedText].filter(Boolean).join(' · ') || undefined;
 }
 
 function createPath(filename: string, format?: RuleProviderFormat): string | undefined {

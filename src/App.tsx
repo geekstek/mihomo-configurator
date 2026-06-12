@@ -22,8 +22,10 @@ import {
   PROXY_TYPES,
   RULE_PROVIDER_BEHAVIORS,
   RULE_PROVIDER_FORMATS,
+  RULE_PROVIDER_TEMPLATES,
   RULE_TYPES,
   SECTIONS,
+  type RuleProviderTemplate,
 } from './constants';
 import {
   createEmptyDraft,
@@ -794,6 +796,7 @@ function RuleProvidersSection({
   updateDraft: (updater: (current: ConfigDraft) => ConfigDraft) => void;
 }) {
   const [detections, setDetections] = useState<Record<string, RuleProviderDetectionState>>({});
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const autoTimers = useRef<Record<string, number>>({});
 
   useEffect(() => () => {
@@ -878,6 +881,7 @@ function RuleProvidersSection({
 
         return {
           ...provider,
+          url: result.normalizedUrl ?? provider.url,
           type: 'http',
           name: provider.name || result.name || provider.name,
           path: provider.path || result.path || provider.path,
@@ -888,16 +892,88 @@ function RuleProvidersSection({
     }));
   }
 
-  return (
-    <EntitySection
-      title="规则提供者"
-      emptyText="暂无规则提供者"
-      onAdd={() => updateDraft((current) => ({
+  function addTemplateProvider(template: RuleProviderTemplate): void {
+    updateDraft((current) => {
+      const existingNames = current.ruleProviders.map((provider) => provider.name).filter(Boolean);
+      const name = createUniqueName(template.name, existingNames);
+
+      return {
         ...current,
-        ruleProviders: [...current.ruleProviders, createRuleProvider()],
-      }))}
+        ruleProviders: [
+          ...current.ruleProviders,
+          createRuleProvider({
+            name,
+            type: 'http',
+            behavior: template.behavior,
+            format: template.format,
+            url: template.url,
+            path: template.path,
+            interval: 86400,
+          }),
+        ],
+      };
+    });
+  }
+
+  function addSelectedTemplate(): void {
+    const template = RULE_PROVIDER_TEMPLATES.find((item) => item.id === selectedTemplateId);
+
+    if (!template) {
+      return;
+    }
+
+    addTemplateProvider(template);
+    setSelectedTemplateId('');
+  }
+
+  return (
+    <Panel
+      title="规则提供者"
+      action={(
+        <button
+          className="primary-button"
+          type="button"
+          onClick={() => updateDraft((current) => ({
+            ...current,
+            ruleProviders: [...current.ruleProviders, createRuleProvider()],
+          }))}
+        >
+          <Plus aria-hidden="true" />
+          新增
+        </button>
+      )}
     >
-      {providers.map((provider) => (
+      <div className="template-picker">
+        <label className="field">
+          <span>规则提供者模板</span>
+          <select
+            value={selectedTemplateId}
+            onChange={(event) => setSelectedTemplateId(event.target.value)}
+          >
+            <option value="">选择预设规则提供者</option>
+            {RULE_PROVIDER_TEMPLATES.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="primary-button"
+          type="button"
+          disabled={!selectedTemplateId}
+          onClick={addSelectedTemplate}
+        >
+          <Plus aria-hidden="true" />
+          添加模板
+        </button>
+      </div>
+
+      {providers.length === 0 ? (
+        <EmptyState text="暂无规则提供者" />
+      ) : (
+        <div className="entity-list">
+          {providers.map((provider) => (
         <EntityCard
           key={provider.id}
           title={provider.name || '未命名规则提供者'}
@@ -947,8 +1023,10 @@ function RuleProvidersSection({
           </div>
           <AdvancedYaml value={provider.extraYaml} onChange={(extraYaml) => updateProvider(provider.id, { extraYaml })} />
         </EntityCard>
-      ))}
-    </EntitySection>
+          ))}
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -1488,6 +1566,22 @@ function isHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function createUniqueName(baseName: string, existingNames: string[]): string {
+  const used = new Set(existingNames);
+
+  if (!used.has(baseName)) {
+    return baseName;
+  }
+
+  let index = 2;
+
+  while (used.has(`${baseName}-${index}`)) {
+    index += 1;
+  }
+
+  return `${baseName}-${index}`;
 }
 
 function buildPolicyOptions(draft: ConfigDraft): string[] {
