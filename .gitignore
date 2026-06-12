@@ -3,5 +3,6 @@ dist
 tsconfig.tsbuildinfo
 .DS_Store
 *.local
+*.local.yaml
 .env
 .env.*
